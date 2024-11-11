@@ -1,0 +1,17 @@
+# Pythonイメージをベースに設定
+FROM python:3.9-slim
+
+# 作業ディレクトリを作成
+WORKDIR /app
+
+# 必要なファイルをコンテナにコピー
+COPY . /app
+
+# Pythonの依存パッケージをインストール
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 環境変数の設定ファイルを読み込むためにdotenvをインストール
+RUN pip install python-dotenv
+
+# コンテナ起動時に実行するコマンド
+CMD ["python", "bot.py"]

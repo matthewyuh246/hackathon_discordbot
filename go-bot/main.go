@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 	"github.com/matthewyuh246/hackathon/models"
+
 	"github.com/robfig/cron"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -33,12 +35,65 @@ func loadEnv() {
 	fmt.Println(".envを読み込みました。")
 }
 
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+func playNotificationSound1() {
+	// ffplayで音楽を再生
+	cmd := exec.Command("ffplay", "-nodisp", "-autoexit", "/app/notification.mp3")
+	err := cmd.Start()
+	if err != nil {
+		fmt.Println("Error playing sound:", err)
+	}
+}
+
+func playNotificationSound2() {
+	// ffplayで音楽を再生
+	cmd := exec.Command("ffplay", "-nodisp", "-autoexit", "/app/happy-birthday.mp3")
+	err := cmd.Start()
+	if err != nil {
+		fmt.Println("Error playing sound:", err)
+	}
+}
+
+func notifyNextDayEvents(s *discordgo.Session, calendarService *calendar.Service, channelID string) {
+	now := time.Now()
+	tomorrow := now.Add(24 * time.Hour)
+	timeMin := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, tomorrow.Location()).Format(time.RFC3339)
+	timeMax := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 23, 59, 59, 0, tomorrow.Location()).Format(time.RFC3339)
+
+	events, err := calendarService.Events.List("primary").ShowDeleted(false).
+		SingleEvents(true).TimeMin(timeMin).TimeMax(timeMax).OrderBy("startTime").Do()
+	if err != nil {
+		log.Printf("Unable to retrieve events: %v", err)
+		return
+	}
+
+	if len(events.Items) == 0 {
+		s.ChannelMessageSend(channelID, "明日の予定はありません。")
+		return
+	}
+
+	for _, item := range events.Items {
+		start := item.Start.DateTime
+		if start == "" {
+			start = item.Start.Date
+		}
+		message := fmt.Sprintf("明日の予定: %s\n開始時刻: %s\nリンク: %s", item.Summary, start, item.HtmlLink)
+		s.ChannelMessageSend(channelID, message)
+	}
+}
+
+func scheduleDailyEventCheck(s *discordgo.Session, calendarService *calendar.Service, channelID string) {
+	// 毎日21時に明日の予定を取得して通知するジョブを設定
+	c.AddFunc("0 21 * * *", func() {
+		notifyNextDayEvents(s, calendarService, channelID)
+	})
+}
+
+func messageCreate1(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
 
-	if m.Content[:4] == "!add" {
+	if len(m.Content) >= 4 && m.Content[:4] == "!add" {
 		parts := strings.TrimSpace(m.Content[5:])
 		details := strings.SplitN(parts, "|", 2)
 
@@ -69,19 +124,47 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func scheduleReminders(s *discordgo.Session, event models.Event) {
-	reminderTime36 := event.Time.Add(-36 * time.Hour)
-	c.AddFunc(reminderTime36.Format("05 04 15 02 01 *"), func() {
-		sendReminder(s, event.ChannelID, event.Title, 36)
+
+	reminderTime24 := event.Time.Add(-33 * time.Hour)
+	c.AddFunc(reminderTime24.Format("05 04 15 02 01 *"), func() {
+		sendReminder1(s, event.ChannelID, event.Title, 24)
 	})
 
-	reminderTime12 := event.Time.Add(-12 * time.Hour)
+	reminderTime12 := event.Time.Add(-21 * time.Hour)
 	c.AddFunc(reminderTime12.Format("05 04 15 02 01 *"), func() {
-		sendReminder(s, event.ChannelID, event.Title, 12)
+		sendReminder1(s, event.ChannelID, event.Title, 12)
 	})
+
+	reminderTime3 := event.Time.Add(-12 * time.Hour)
+	c.AddFunc(reminderTime3.Format("05 04 15 02 01 *"), func() {
+		sendReminder1(s, event.ChannelID, event.Title, 3)
+	})
+
+	reminderTime1 := event.Time.Add(-10 * time.Hour)
+	c.AddFunc(reminderTime1.Format("05 04 15 02 01 *"), func() {
+		sendReminder1(s, event.ChannelID, event.Title, 1)
+	})
+
+	reminderTime0 := event.Time.Add(-9 * time.Hour)
+	c.AddFunc(reminderTime0.Format("05 04 15 02 01 *"), func() {
+		sendReminder4(s, event.ChannelID, event.Title)
+	})
+
 }
 
-func sendReminder(s *discordgo.Session, channelID, title string, hours int) {
+func sendReminder1(s *discordgo.Session, channelID, title string, hours int) {
 	s.ChannelMessageSend(channelID, fmt.Sprintf("%sが%d時間後にあります！", title, hours))
+	playNotificationSound1()
+}
+
+func sendReminder3(s *discordgo.Session, channelID string) {
+	s.ChannelMessageSend(channelID, fmt.Sprintf("Happy birthday!!"))
+	playNotificationSound2()
+}
+
+func sendReminder4(s *discordgo.Session, channelID, title string) {
+	s.ChannelMessageSend(channelID, fmt.Sprintf("%sの時間です！！", title))
+	playNotificationSound1()
 }
 
 // Google Calendarの認証とクライアントのセットアップ
@@ -126,7 +209,7 @@ func notifyDiscord(s *discordgo.Session, calendarService *calendar.Service, cale
 		} else {
 			start = item.Start.Date
 		}
-		message := fmt.Sprintf("Event: %s\nStart: %s\nLink: %s", item.Summary, start, item.HtmlLink)
+		message := fmt.Sprintf("予定: %s\n開始時刻: %s\nリンク: %s", item.Summary, start, item.HtmlLink)
 		s.ChannelMessageSend(channelID, message)
 	}
 }
@@ -196,7 +279,9 @@ func main() {
 		}
 	})
 
-	dg.AddHandler(messageCreate)
+	dg.AddHandler(messageCreate1)
+	// 毎日21時に次の日の予定を取得するジョブを設定
+	scheduleDailyEventCheck(dg, calendarService, channelID)
 
 	err = dg.Open()
 	if err != nil {

@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  python-bot:
+    build: ./python-bot
+    env_file: .env
+    volumes:
+      - ./.env:/app/.env  # .envファイルをコンテナ内にマウント
+
+  go-bot:
+    build: ./go-bot
+    env_file: .env
+    volumes:
+      - ./.env:/app/.env  # .envファイルをコンテナ内にマウント
